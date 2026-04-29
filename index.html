@@ -101,7 +101,6 @@ let globalDamage = 1;
 
 document.getElementById('playerFile').addEventListener('change', (e) => {
    const reader = new FileReader();
-   // 오류 수정됨: remove_46 -> onload
    reader.onload = (ev) => { 
        playerImg.onload = () => isPlayerImgLoaded = true; 
        playerImg.src = ev.target.result; 
@@ -111,7 +110,6 @@ document.getElementById('playerFile').addEventListener('change', (e) => {
 
 document.getElementById('enemyFile').addEventListener('change', (e) => {
    const reader = new FileReader();
-   // 오류 수정됨: remove_46 -> onload
    reader.onload = (ev) => { 
        enemyImg.onload = () => isEnemyImgLoaded = true; 
        enemyImg.src = ev.target.result; 
@@ -132,6 +130,7 @@ let state = 'menu';
 let frame = 0;
 let score = 0;
 let shake = 0;
+let bossKillCount = 0; // 보스 처치 횟수 기록
 
 let player, bullets, enemies, enemyBullets, particles, items, stars, boss;
 
@@ -162,11 +161,10 @@ function initPlayer() {
    };
 }
 
-// 플레이어 피격 처리 함수
 function playerHit(damage) {
    if (player.invinc > 0) return;
    player.hp -= damage;
-   player.invinc = 60; // 1초 무적
+   player.invinc = 60;
    shake = 10;
    playerHpBar.style.width = Math.max(0, (player.hp / player.maxHp) * 100) + '%';
    
@@ -208,12 +206,15 @@ function spawnEnemy() {
 }
 
 function spawnBoss() {
+   // 보스 처치 횟수에 따른 체력 증가 (기본 300 + 잡을때마다 150 추가)
+   let dynamicMaxHp = 300 + (bossKillCount * 150);
+   
    boss = {
-      x: 200, y: -50, hp: 300, maxHp: 300, phase: 1, vx: 2, vy: 1, timer: 0,
+      x: 200, y: -50, hp: dynamicMaxHp, maxHp: dynamicMaxHp, phase: 1, vx: 2 + (bossKillCount * 0.3), vy: 1, timer: 0,
       draw() {
          ctx.save();
          ctx.translate(this.x, this.y);
-         ctx.fillStyle = this.hp < 100 ? '#800' : '#444';
+         ctx.fillStyle = this.hp < (this.maxHp * 0.33) ? '#800' : '#444';
          ctx.fillRect(-40, -20, 80, 40);
          ctx.fillStyle = '#222';
          ctx.fillRect(-50, -10, 10, 30); ctx.fillRect(40, -10, 10, 30);
@@ -225,6 +226,7 @@ function spawnBoss() {
       }
    };
    bossContainer.style.display = 'block';
+   bossHpBar.style.width = '100%';
 }
 
 function fireBomb() {
@@ -250,7 +252,7 @@ function startGame() {
    player = initPlayer();
    bullets = []; enemies = []; enemyBullets = []; particles = []; items = []; boss = null;
    stars = Array.from({length: 50}, () => ({x: Math.random()*400, y: Math.random()*600, speed: Math.random()*2+1}));
-   score = 0; frame = 0; shake = 0;
+   score = 0; frame = 0; shake = 0; bossKillCount = 0; // 보스 킬 카운트 리셋
    state = 'playing';
    msgScreen.style.display = 'none';
    bossContainer.style.display = 'none';
@@ -291,7 +293,8 @@ function update() {
    bullets.forEach(b => { b.x += b.vx; b.y += b.vy; });
    bullets = bullets.filter(b => b.y > -20 && b.x > -20 && b.x < canvas.width+20);
 
-   if (score > 1500 && !boss) spawnBoss();
+   // 보스 등장 스코어 조절 (처치 횟수에 따라 필요 스코어 증가)
+   if (score > 1500 + (bossKillCount * 6000) && !boss) spawnBoss();
 
    enemies.forEach(e => {
       e.x += e.vx; e.y += e.vy;
@@ -308,21 +311,38 @@ function update() {
          boss.x += boss.vx;
          if (boss.x < 50 || boss.x > canvas.width - 50) boss.vx *= -1;
          boss.timer++;
-         boss.phase = boss.hp > 200 ? 1 : (boss.hp > 100 ? 2 : 3);
-         if (boss.timer % (boss.phase === 3 ? 30 : 50) === 0) {
+         
+         // 보스의 최대 체력에 비례하여 페이즈 변경
+         boss.phase = boss.hp > (boss.maxHp * 0.66) ? 1 : (boss.hp > (boss.maxHp * 0.33) ? 2 : 3);
+         
+         // 보스 킬 카운트에 따른 공격 패턴 강화치 설정
+         let fireRate = Math.max(10, (boss.phase === 3 ? 30 : 50) - (bossKillCount * 5)); // 발사 쿨타임 감소
+         let bSpeed = 1 + (bossKillCount * 0.2); // 탄속 증가
+         let bDmg = 15 + (bossKillCount * 10);   // 보스 탄막 공격력 증가
+         
+         if (boss.timer % fireRate === 0) {
            if (boss.phase === 1) {
-              for(let i=0; i<8; i++) {
-                 let a = (Math.PI*2/8) * i;
-                 enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(a)*3, vy: Math.sin(a)*3, r: 5, c:'#f00'});
+              let ways = 8 + (bossKillCount * 2); // 탄막 개수 증가
+              for(let i=0; i<ways; i++) {
+                 let a = (Math.PI*2/ways) * i;
+                 enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(a)*3*bSpeed, vy: Math.sin(a)*3*bSpeed, r: 5, c:'#f00', dmg: bDmg});
               }
            } else if (boss.phase === 2) {
               let angle = Math.atan2(player.y - (boss.y+10), player.x - boss.x);
-              enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle)*5, vy: Math.sin(angle)*5, r: 6, c:'#0ff'});
+              enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle)*5*bSpeed, vy: Math.sin(angle)*5*bSpeed, r: 6, c:'#0ff', dmg: bDmg});
+              if(bossKillCount > 0) { // 추가 탄막 전개
+                 enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle+0.3)*5*bSpeed, vy: Math.sin(angle+0.3)*5*bSpeed, r: 6, c:'#0ff', dmg: bDmg});
+                 enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle-0.3)*5*bSpeed, vy: Math.sin(angle-0.3)*5*bSpeed, r: 6, c:'#0ff', dmg: bDmg});
+              }
            } else {
-              enemyBullets.push({x: boss.x-40, y: boss.y+10, vx: 0, vy: 6, r: 4, c:'#ff0'});
-              enemyBullets.push({x: boss.x+40, y: boss.y+10, vx: 0, vy: 6, r: 4, c:'#ff0'});
+              enemyBullets.push({x: boss.x-40, y: boss.y+10, vx: 0, vy: 6*bSpeed, r: 4, c:'#ff0', dmg: bDmg});
+              enemyBullets.push({x: boss.x+40, y: boss.y+10, vx: 0, vy: 6*bSpeed, r: 4, c:'#ff0', dmg: bDmg});
               let angle = Math.atan2(player.y - boss.y, player.x - boss.x);
-              enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle)*6, vy: Math.sin(angle)*6, r: 6, c:'#f00'});
+              enemyBullets.push({x: boss.x, y: boss.y+10, vx: Math.cos(angle)*6*bSpeed, vy: Math.sin(angle)*6*bSpeed, r: 6, c:'#f00', dmg: bDmg});
+              if(bossKillCount > 0) { // 양옆 추가 탄막
+                 enemyBullets.push({x: boss.x-20, y: boss.y+10, vx: 0, vy: 6*bSpeed, r: 4, c:'#ff0', dmg: bDmg});
+                 enemyBullets.push({x: boss.x+20, y: boss.y+10, vx: 0, vy: 6*bSpeed, r: 4, c:'#ff0', dmg: bDmg});
+              }
            }
          }
       }
@@ -337,6 +357,7 @@ function update() {
          bossHpBar.style.width = Math.max(0, (boss.hp / boss.maxHp) * 100) + '%';
          if (boss.hp <= 0) {
            score += 5000; shake = 30;
+           bossKillCount++; // 보스 킬 카운트 상승!
            for(let p=0; p<100; p++) particles.push(createParticle(boss.x, boss.y, '#f00', 8));
            boss = null; bossContainer.style.display = 'none';
          }
@@ -362,12 +383,14 @@ function update() {
 
    if (player.invinc <= 0) {
       enemyBullets.forEach(eb => {
-         if (Math.hypot(player.x - eb.x, player.y - eb.y) < player.radius + eb.r - 2) playerHit(15);
+         // eb.dmg가 존재하면 해당 데미지 적용, 없으면 기본 15 데미지
+         if (Math.hypot(player.x - eb.x, player.y - eb.y) < player.radius + eb.r - 2) playerHit(eb.dmg || 15);
       });
       enemies.forEach(e => {
          if (Math.hypot(player.x - e.x, player.y - e.y) < player.radius + 10) playerHit(25);
       });
-      if (boss && Math.abs(player.x - boss.x) < 45 && Math.abs(player.y - boss.y) < 35) playerHit(50);
+      // 보스와 몸통 박치기 시 데미지도 증가
+      if (boss && Math.abs(player.x - boss.x) < 45 && Math.abs(player.y - boss.y) < 35) playerHit(50 + (bossKillCount * 15));
    }
 
    enemyBullets.forEach(eb => { eb.x += eb.vx; eb.y += eb.vy; });
